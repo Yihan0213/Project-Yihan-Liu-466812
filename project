@@ -1,0 +1,318 @@
+using Distributions, Statistics, Plots
+
+const gamma=2.0
+const beta=0.96
+const phi=0.0
+const rho=0.9
+const sigma=0.4
+const num_z=5
+const zbar =1.0
+
+Na=1000
+a_min=0.0
+a_max=20.0
+a_grid=range(a_min, a_max, length=Na)
+
+const α=0.36
+
+δ=0.0
+K=(0.2/(1-α)) / δ
+A=1 / ((1-α) * K^α)
+τ=0.2 * (A * K^α)
+r=α * A * K^(α-1) - δ
+println("Calibration results for λ = 0:")
+println("δ = ", δ)
+println("K = ", K)
+println("A = ", A)
+println("τ = ", τ)
+println("r = ", r)
+println("Capital-output ratio K/Y = ", K*(1-α))
+
+
+#2
+function tauchen(rho,sigma,m,num_z)
+    z_std=sigma/sqrt(1 - rho^2)
+    z_max=m * z_std
+    z_min=-z_max
+    z_grid=range(z_min, z_max, length=num_z)
+    step=(z_max - z_min) / (num_z - 1)
+    P=zeros(num_z, num_z)
+    for j in 1:num_z
+        for k in 1:num_z
+            if k == 1
+                P[j, k]=cdf(Normal(0,1), (z_grid[1] - rho*z_grid[j] + step/2))
+            elseif k == num_z
+                P[j, k]=1 - cdf(Normal(0,1), (z_grid[end] - rho*z_grid[j] - step/2))
+            else
+                P[j, k]=cdf(Normal(0,1), (z_grid[k] - rho*z_grid[j] + step/2)) -
+                        cdf(Normal(0,1), (z_grid[k] - rho*z_grid[j] - step/2))
+            end
+        end
+    end
+    z_vals = exp.(z_grid .+ log(zbar))
+    return z_vals, P
+end
+
+m=3
+z_vals, P_z=tauchen(rho, sigma, m, num_z)
+
+
+#3
+function utility(c)
+    if c <= 0
+        return -1e10
+    else
+        if gamma == 1.0
+            return log(c)
+        else
+            return (c^(1-gamma) - 1) / (1-gamma)
+        end
+    end
+end
+
+function tax(income, ybar, tau, lambda)
+    return income - (1 - tau) * ((income / ybar)^(1 - lambda)) * ybar
+end
+
+
+function post_tax_income(y, ybar, tau, lambda)
+    return (1 - tau) * y^(1 - lambda) * ybar^(lambda)
+end
+
+#4
+function solve_household(r, w, tau, lambda, a_grid, z_vals, P_z)
+    Nz=length(z_vals)
+    Na=length(a_grid)
+    V=zeros(Na, Nz)
+    policy_a=zeros(Na, Nz)
+    policy_c=zeros(Na, Nz)
+    max_iter=1000
+    tol=1e-6
+    ybar=1.0
+    for it in 1:max_iter
+        V_new = similar(V)
+        for iz in 1:Nz
+            for ia in 1:Na
+                current_a=a_grid[ia]
+                current_z=z_vals[iz]
+                income=current_z * w
+                best_val=-1e10
+                best_a_val=a_grid[1]
+                best_c=0.0
+                
+                for a_next in a_grid
+                    c=income - tax(income, ybar, tau, lambda) + (1+r)*current_a - a_next
+                    if c > 0
+                        util=utility(c)
+                        expected=0.0
+                        
+                        a_idx=findfirst(==(a_next), a_grid)
+                        for iz_next in 1:Nz
+                            expected += P_z[iz, iz_next] * V[a_idx, iz_next]
+                        end
+                        val=util + beta * expected
+                        if val > best_val
+                            best_val=val
+                            best_a_val=a_next
+                            best_c=c
+                        end
+                    end
+                end
+                V_new[ia, iz]=best_val
+                policy_a[ia, iz]=best_a_val
+                policy_c[ia, iz]=best_c
+            end
+        end
+        if maximum(abs.(V_new - V)) < tol
+            println("Household value function converged at iteration $it")
+            break
+        end
+        V=copy(V_new)
+    end
+    return V, policy_a, policy_c
+end
+
+function solve_household(r, w, tau, lambda, a_grid, z_vals, P_z)
+    Nz=length(z_vals)
+    Na=length(a_grid)
+    V=zeros(Na, Nz)
+    policy_a=zeros(Na, Nz)
+    policy_c=zeros(Na, Nz)
+    max_iter=1000
+    tol=1e-6
+    ybar=1.0
+    for it in 1:max_iter
+        V_new = similar(V)
+        for iz in 1:Nz
+            for ia in 1:Na
+                current_a=a_grid[ia]
+                current_z=z_vals[iz]
+                income=current_z * w
+                best_val=-1e10
+                best_a_val=a_grid[1]
+                best_c=0.0
+                
+                for a_next in a_grid
+                    c=income - tax(income, ybar, tau, lambda) + (1+r)*current_a - a_next
+                    if c > 0
+                        util=utility(c)
+                        expected=0.0
+                        
+                        a_idx=findfirst(==(a_next), a_grid)
+                        for iz_next in 1:Nz
+                            expected += P_z[iz, iz_next] * V[a_idx, iz_next]
+                        end
+                        val=util + beta * expected
+                        if val > best_val
+                            best_val=val
+                            best_a_val=a_next
+                            best_c=c
+                        end
+                    end
+                end
+                V_new[ia, iz]=best_val
+                policy_a[ia, iz]=best_a_val
+                policy_c[ia, iz]=best_c
+            end
+        end
+        if maximum(abs.(V_new - V)) < tol
+            println("Household value function converged at iteration $it")
+            break
+        end
+        V=copy(V_new)
+    end
+    return V, policy_a, policy_c
+    
+end
+
+V0, policy_a0, policy_c0 = solve_household(r, 1.0, τ, 0.0, a_grid, z_vals, P_z)
+
+λ_new=0.15
+τ_new=τ
+V1, policy_a1, policy_c1 = solve_household(r, 1.0, τ_new, λ_new, a_grid, z_vals, P_z)
+
+#5
+
+function compute_stationary_distribution(policy_a, a_grid, P_z; max_iter=1000, tol=1e-8)
+    Na, Nz=size(policy_a)
+    dist=ones(Na, Nz) / (Na * Nz)
+    for it in 1:max_iter
+        dist_new=zeros(Na, Nz)
+        for iz in 1:Nz
+            for ia in 1:Na
+                mass=dist[ia, iz]
+                next_a=policy_a[ia, iz]
+                ja=findmin(abs.(a_grid .- next_a))[2]
+                for iz_next in 1:Nz
+                    dist_new[ja, iz_next] += mass * P_z[iz, iz_next]
+                end
+            end
+        end
+        if maximum(abs.(dist_new - dist)) < tol
+            println("Stationary distribution converged at iteration $it")
+            break
+        end
+        dist=copy(dist_new)
+    end
+    return dist
+end
+
+dist0=compute_stationary_distribution(policy_a0, a_grid, P_z)
+dist1=compute_stationary_distribution(policy_a1, a_grid, P_z)
+
+#6
+function gini_coefficient(x, weights)
+    sort_idx=sortperm(x)
+    x_sorted=x[sort_idx]
+    w_sorted=weights[sort_idx]
+    cumw=cumsum(w_sorted)
+    cumxw=cumsum(x_sorted .* w_sorted)
+    n=sum(w_sorted)
+    G=1 - 2 * sum(cumxw .* w_sorted) / (n * sum(x_sorted .* w_sorted)) + sum(w_sorted.^2) / (n^2)
+    return G
+end
+
+a_values0=repeat(a_grid, inner=length(z_vals))
+weights0= vec(dist0)
+avg_assets0=sum(a_values0 .* weights0)
+gini_assets0=gini_coefficient(a_values0, weights0)
+
+y_values0=Float64[]
+
+for z in z_vals, _ in 1:length(a_grid)
+    income=z * 1.0
+    push!(y_values0, post_tax_income(income, 1.0, τ, 0.0))
+end
+gini_income0=gini_coefficient(y_values0, weights0)
+a_values1=repeat(a_grid, inner=length(z_vals))
+weights1=vec(dist1)
+avg_assets1=sum(a_values1 .* weights1)
+gini_assets1=gini_coefficient(a_values1, weights1)
+y_values1=Float64[]
+
+for z in z_vals, _ in 1:length(a_grid)
+    income = z * 1.0
+    push!(y_values1, post_tax_income(income, 1.0, τ_new, λ_new))
+end
+gini_income1=gini_coefficient(y_values1, weights1)
+
+println("\nEquilibrium Statistics:")
+println("----- For λ = 0 -----")
+println("Average Assets = ", avg_assets0)
+println("Gini Coefficient (Assets) = ", gini_assets0)
+println("Gini Coefficient (After-tax Income) = ", gini_income0)
+println("----- For λ = 0.15 -----")
+println("Average Assets = ", avg_assets1)
+println("Gini Coefficient (Assets) = ", gini_assets1)
+println("Gini Coefficient (After-tax Income) = ", gini_income1)
+println("Interest rate r = ", r, ", Wage w = 1")
+println("Tax rate τ = ", τ, " (kept the same in both cases)")
+println("Capital-output ratio K/Y = ", K*(1-α))
+
+
+#7
+#7.1
+p1 = plot(a_grid, V0[:,1], label="V (λ=0)", xlabel="Assets", ylabel="Value Function", title="Value Function Comparison")
+plot!(a_grid, V1[:,1], label="V (λ=0.15)")
+display(p1)
+
+#7.2
+p2 = plot(a_grid, policy_a0[:,1], label="Policy a' (λ=0)", xlabel="Current Assets", ylabel="Next Assets", title="Policy Function Comparison")
+plot!(a_grid, policy_a1[:,1], label="Policy a' (λ=0.15)")
+display(p2)
+
+#7.3
+marginal_assets0 = [sum(dist0[i, :]) for i in 1:length(a_grid)]
+marginal_assets1 = [sum(dist1[i, :]) for i in 1:length(a_grid)]
+p3 = plot(a_grid, marginal_assets0, label="Asset Distribution (λ=0)", xlabel="Assets", ylabel="Density", title="Stationary Asset Distribution")
+plot!(a_grid, marginal_assets1, label="Asset Distribution (λ=0.15)")
+display(p3)
+
+#7.4
+function lorenz_curve(x, weights)
+    sort_idx = sortperm(x)
+    x_sorted = x[sort_idx]
+    w_sorted = weights[sort_idx]
+    cumw = cumsum(w_sorted) / sum(w_sorted)
+    cumx = cumsum(x_sorted .* w_sorted) / sum(x_sorted .* w_sorted)
+    return cumw, cumx
+end
+
+cumw0, cumx0 = lorenz_curve(a_values0, weights0)
+cumw1, cumx1 = lorenz_curve(a_values1, weights1)
+p4 = plot(cumw0, cumx0, label="Lorenz (Assets, λ=0)", xlabel="Cumulative Share", ylabel="Cumulative Wealth", title="Lorenz Curve")
+plot!(cumw1, cumx1, label="Lorenz (Assets, λ=0.15)")
+plot!([0,1], [0,1], linestyle=:dash, label="Line of Equality")
+display(p4)
+
+
+cumw_y0, cumx_y0 = lorenz_curve(y_values0, weights0)
+cumw_y1, cumx_y1 = lorenz_curve(y_values1, weights1)
+p5 = plot(cumw_y0, cumx_y0, label="Lorenz (After-tax Income, λ=0)", xlabel="Cumulative Share", ylabel="Cumulative Income", title="After-tax Income Lorenz Curve")
+plot!(cumw_y1, cumx_y1, label="Lorenz (After-tax Income, λ=0.15)")
+plot!([0,1], [0,1], linestyle=:dash, label="Line of Equality")
+display(p5)
+
+
+
+combined_plot = plot(p1, p2, p3, p4, layout=(2,2), size=(800,800))
